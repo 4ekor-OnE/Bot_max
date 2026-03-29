@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Пользователи{% endblock %}
+{% block body %}
+<h1 class="h3 mb-4">Пользователи</h1>
+<div class="table-responsive card shadow-sm">
+  <table class="table table-hover mb-0">
+    <thead class="table-light"><tr><th>ID</th><th>max_id</th><th>Имя</th><th>Логин</th><th>Роль</th><th></th></tr></thead>
+    <tbody>
+      {% for u in users %}
+      <tr>
+        <td>{{ u.id }}</td>
+        <td><code>{{ u.max_id }}</code></td>
+        <td>{{ u.first_name or '—' }}</td>
+        <td>{{ u.username or '—' }}</td>
+        <td><span class="badge bg-info">{{ u.role.value }}</span></td>
+        <td>
+          <form method="post" action="{{ url_for('user_set_role', uid=u.id) }}" class="d-flex gap-1 align-items-center">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <select name="role" class="form-select form-select-sm" style="width:auto">
+              <option value="user" {% if u.role.value == 'user' %}selected{% endif %}>user</option>
+              <option value="support" {% if u.role.value == 'support' %}selected{% endif %}>support</option>
+              <option value="director" {% if u.role.value == 'director' %}selected{% endif %}>director</option>
+            </select>
+            <button type="submit" class="btn btn-sm btn-outline-primary">Сохранить</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

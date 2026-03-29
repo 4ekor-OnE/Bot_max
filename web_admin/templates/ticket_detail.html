@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Заявка #{{ ticket.id }}{% endblock %}
+{% block body %}
+<p><a href="{{ url_for('tickets_list') }}">← К списку</a></p>
+<h1 class="h3">Заявка #{{ ticket.id }}</h1>
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <p><strong>Статус:</strong> {{ ticket.status.value }} · <strong>Приоритет:</strong> {{ ticket.priority.value }} · <strong>Срочная:</strong> {{ 'да' if ticket.is_urgent else 'нет' }}</p>
+    <p><strong>Магазин:</strong> {{ shop.name if shop else ticket.shop_id }} · <strong>Категория:</strong> {{ category.name if category else ticket.category_id }}</p>
+    <p><strong>Автор:</strong> user #{{ ticket.user_id }} · <strong>Исполнитель:</strong> {% if ticket.assigned_to %}#{{ ticket.assigned_to }}{% else %}—{% endif %}</p>
+    <p class="small text-muted">Создана: {{ ticket.created_at }} · SLA: {{ ticket.sla_deadline or '—' }}</p>
+    <h2 class="h6">Заголовок</h2>
+    <p>{{ ticket.title }}</p>
+    <h2 class="h6">Описание</h2>
+    <pre class="bg-light p-2 rounded small" style="white-space:pre-wrap;">{{ ticket.description }}</pre>
+    {% set photo = (ticket.photo_path or '')|trim %}
+    {% if photo %}
+    <h2 class="h6 mt-3">Фото к заявке</h2>
+    {% if photo.startswith('local:') %}
+    {% set fname = photo[6:] %}
+    <p class="mb-2"><a href="{{ url_for('ticket_photo_file', filename=fname) }}" target="_blank" rel="noopener noreferrer">Открыть в новой вкладке</a></p>
+    <div class="border rounded p-2 bg-white">
+      <img src="{{ url_for('ticket_photo_file', filename=fname) }}" alt="Фото к заявке" class="img-fluid rounded" style="max-height: min(70vh, 640px); width: auto;" loading="lazy">
+    </div>
+    {% elif photo.startswith('http://') or photo.startswith('https://') %}
+    <p class="mb-2"><a href="{{ photo }}" target="_blank" rel="noopener noreferrer">Открыть оригинал в новой вкладке</a></p>
+    <div class="border rounded p-2 bg-white">
+      <img src="{{ photo }}" alt="Фото к заявке" class="img-fluid rounded" style="max-height: min(70vh, 640px); width: auto;" loading="lazy" referrerpolicy="no-referrer">
+    </div>
+    {% else %}
+    <p class="text-muted small mb-0">Фото сохранено без ссылки (старая заявка). Новые заявки сохраняют копию файла на сервере — пересоздайте вложение или приложите фото заново.</p>
+    {% endif %}
+    {% endif %}
+  </div>
+</div>
+<div class="card shadow-sm mb-3">
+  <div class="card-header">Сменить статус</div>
+  <div class="card-body">
+    <form method="post" class="d-flex flex-wrap gap-2">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      {% for st in statuses %}
+      <button type="submit" name="status" value="{{ st }}" class="btn btn-sm btn-outline-dark">{{ st }}</button>
+      {% endfor %}
+    </form>
+  </div>
+</div>
+{% if comments %}
+<div class="card shadow-sm">
+  <div class="card-header">Комментарии</div>
+  <ul class="list-group list-group-flush">
+    {% for c in comments %}
+    <li class="list-group-item small">
+      <span class="badge {{ 'bg-light text-dark' if c.is_system else 'bg-primary' }}">#{{ c.user_id }}{% if c.is_system %} система{% endif %}</span>
+      {{ c.created_at }} — {{ c.text[:500] }}{% if c.text|length > 500 %}…{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+{% endblock %}

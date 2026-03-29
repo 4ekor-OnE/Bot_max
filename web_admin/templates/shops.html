@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Магазины{% endblock %}
+{% block body %}
+<h1 class="h3 mb-4">Магазины</h1>
+<div class="card shadow-sm mb-4">
+  <div class="card-body">
+    <h2 class="h6">Добавить магазин</h2>
+    <form method="post" action="{{ url_for('shop_add') }}" class="row g-2 align-items-end">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="col-md-8">
+        <input type="text" name="name" class="form-control" placeholder="Название" required maxlength="200">
+      </div>
+      <div class="col-md-4">
+        <button type="submit" class="btn btn-primary">Добавить</button>
+      </div>
+    </form>
+  </div>
+</div>
+<div class="table-responsive card shadow-sm">
+  <table class="table mb-0">
+    <thead class="table-light"><tr><th>ID</th><th>Название</th><th>Заявок</th><th></th></tr></thead>
+    <tbody>
+      {% for s in shops %}
+      <tr>
+        <td>{{ s.id }}</td>
+        <td>
+          <form method="post" action="{{ url_for('shop_rename', sid=s.id) }}" class="d-flex gap-2 flex-wrap">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="text" name="name" value="{{ s.name }}" class="form-control form-control-sm" style="max-width:280px" required>
+            <button type="submit" class="btn btn-sm btn-outline-secondary">Переименовать</button>
+          </form>
+        </td>
+        <td>{{ s.ticket_count }}</td>
+        <td>
+          {% if s.ticket_count == 0 %}
+          <form method="post" action="{{ url_for('shop_delete', sid=s.id) }}" onsubmit="return confirm('Удалить магазин?');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="btn btn-sm btn-outline-danger">Удалить</button>
+          </form>
+          {% else %}
+          <span class="text-muted small">есть заявки</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

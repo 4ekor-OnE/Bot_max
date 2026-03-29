@@ -1,0 +1,6 @@
+maxapi==0.9.15
+python-dotenv==1.0.0
+SQLAlchemy>=2.0,<3
+aiohttp>=3.9,<4
+openpyxl>=3.1,<4
+Flask>=3.0,<4

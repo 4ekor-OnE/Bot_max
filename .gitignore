@@ -1,0 +1,12 @@
+.venv/
+venv/
+.env
+*.db
+__pycache__/
+*.pyc
+data/instructions/*
+!data/instructions/.gitkeep
+data/temp/*
+!data/temp/.gitkeep
+data/ticket_photos/*
+!data/ticket_photos/.gitkeep

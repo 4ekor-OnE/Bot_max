@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Сводка{% endblock %}
+{% block body %}
+<h1 class="h3 mb-4">Сводка</h1>
+<div class="row g-3">
+  <div class="col-md-3"><div class="card"><div class="card-body"><div class="text-muted small">Пользователи</div><div class="fs-3">{{ n_users }}</div></div></div></div>
+  <div class="col-md-3"><div class="card"><div class="card-body"><div class="text-muted small">Магазины</div><div class="fs-3">{{ n_shops }}</div></div></div></div>
+  <div class="col-md-3"><div class="card"><div class="card-body"><div class="text-muted small">Категории</div><div class="fs-3">{{ n_cats }}</div></div></div></div>
+  <div class="col-md-3"><div class="card"><div class="card-body"><div class="text-muted small">Заявки всего</div><div class="fs-3">{{ n_tickets }}</div></div></div></div>
+</div>
+<h2 class="h5 mt-4">Заявки по статусам</h2>
+<ul class="list-group">
+  {% for st, n in ticket_by_status %}
+  <li class="list-group-item d-flex justify-content-between"><span>{{ st }}</span><span class="badge bg-secondary">{{ n }}</span></li>
+  {% endfor %}
+</ul>
+<p class="text-muted small mt-4">Бот и панель управления используют одну БД. Запуск: <code>python -m web_admin</code> (см. README).</p>
+{% endblock %}

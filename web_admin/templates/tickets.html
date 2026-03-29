@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Заявки{% endblock %}
+{% block body %}
+<h1 class="h3 mb-4">Заявки</h1>
+<form method="get" class="row g-2 mb-3 card card-body shadow-sm">
+  <div class="col-md-3">
+    <select name="status" class="form-select">
+      <option value="">Все статусы</option>
+      {% for v in statuses %}
+      <option value="{{ v }}" {% if filters.status == v %}selected{% endif %}>{{ v }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-3">
+    <select name="shop_id" class="form-select">
+      <option value="">Все магазины</option>
+      {% for s in shops %}
+      <option value="{{ s.id }}" {% if filters.shop_id == s.id %}selected{% endif %}>{{ s.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2">
+    <button type="submit" class="btn btn-primary w-100">Фильтр</button>
+  </div>
+</form>
+<div class="table-responsive card shadow-sm">
+  <table class="table table-sm mb-0">
+    <thead class="table-light"><tr><th>#</th><th>Статус</th><th>Заголовок</th><th>Фото</th><th>Магазин</th><th>Создана</th><th></th></tr></thead>
+    <tbody>
+      {% for t in tickets %}
+      <tr>
+        <td>{{ t.id }}</td>
+        <td><span class="badge bg-secondary">{{ t.status.value }}</span></td>
+        <td>{{ t.title[:60] }}{% if t.title|length > 60 %}…{% endif %}</td>
+        <td class="text-center">{% if t.has_photo %}<span title="Есть вложение">📷</span>{% else %}—{% endif %}</td>
+        <td>{{ t.shop_name }}</td>
+        <td class="small">{{ t.created_at }}</td>
+        <td><a class="btn btn-sm btn-outline-primary" href="{{ url_for('ticket_detail', tid=t.id) }}">Открыть</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% if not tickets %}
+<p class="text-muted">Нет заявок по фильтру.</p>
+{% endif %}
+{% endblock %}
