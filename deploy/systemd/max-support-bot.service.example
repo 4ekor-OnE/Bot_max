@@ -1,0 +1,21 @@
+# Пример systemd для VPS/выделенного сервера (не shared passenger).
+# Скопируйте в /etc/systemd/system/max-support-bot.service, поправьте пути и User=.
+#
+# На shared-хостинге Джино процесс часто запускают вручную из SSH или через панель;
+# тогда используйте только deploy/jino_deploy.sh и команду запуска из README.
+
+[Unit]
+Description=MAX Support Bot (max_support_bot)
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/var/www/max_support_bot
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/var/www/max_support_bot/.venv/bin/python /var/www/max_support_bot/bot.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

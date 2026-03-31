@@ -17,6 +17,7 @@ def get_main_menu_keyboard(role='user'):
         keyboard = [
             [CallbackButton(text='🆕 Новые заявки', payload='new_tickets')],
             [CallbackButton(text='⚙️ В работе', payload='in_progress_tickets')],
+            [CallbackButton(text='⏸️ Отложенные', payload='postponed_tickets')],
             [CallbackButton(text='🏪 По магазинам', payload='tickets_by_shop')],
             [CallbackButton(text='📊 Моя статистика', payload='my_statistics')],
             [CallbackButton(text='🔔 Уведомления', payload='notifications')]

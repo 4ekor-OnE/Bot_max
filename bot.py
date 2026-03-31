@@ -30,7 +30,11 @@ from services.notification_service import (
     notify_ticket_comment_participants,
     notify_user_status_change,
 )
-from services.ticket_photos import is_image_attachment, persist_ticket_photo_from_attachment
+from services.ticket_photos import (
+    is_image_attachment,
+    persist_ticket_photo_from_attachment,
+    send_ticket_photo_to_max_user,
+)
 from app.fsm import FSM, FSMState
 from app.admin_panel import handle_admin_callback, process_admin_text
 from maxapi.types.attachments.buttons import CallbackButton
@@ -1167,6 +1171,9 @@ async def handle_callback(event: MessageCallback):
                     details_text,
                     attachments=[keyboard_to_attachment(details_kb)]
                 )
+                await send_ticket_photo_to_max_user(
+                    bot, max_id, ticket.photo_path, f"📷 Заявка #{ticket.id}"
+                )
             finally:
                 db.close()
         elif callback_data == 'notifications':
@@ -1489,6 +1496,8 @@ async def handle_callback(event: MessageCallback):
                     button_text = f"{priority_emoji} #{ticket.id} - {ticket.title[:22]}"
                     if ticket.is_urgent:
                         button_text = f"🚨 {button_text}"
+                    if ticket.photo_path:
+                        button_text = f"📷 {button_text}"
                     if len(ticket.title) > 22:
                         button_text += "..."
                     
@@ -1520,15 +1529,17 @@ async def handle_callback(event: MessageCallback):
             
             db = next(get_db_session())
             try:
-                # Получаем заявки в работе, назначенные на этого специалиста
-                tickets = db.query(Ticket).filter(
-                    Ticket.status == TicketStatus.IN_PROGRESS,
-                    Ticket.assigned_to == user_id
-                ).order_by(Ticket.created_at.desc()).all()
+                # В работе + отложенные (назначенные на специалиста); директор видит все такие заявки
+                active_statuses = (TicketStatus.IN_PROGRESS, TicketStatus.POSTPONED)
+                q = db.query(Ticket).filter(Ticket.status.in_(active_statuses))
+                if role == "director":
+                    tickets = q.order_by(Ticket.created_at.desc()).all()
+                else:
+                    tickets = q.filter(Ticket.assigned_to == user_id).order_by(Ticket.created_at.desc()).all()
                 
                 if not tickets:
                     await safe_answer_ui(event, max_id,
-                        "⚙️ Заявки в работе\n\nУ вас нет заявок в работе.",
+                        "⚙️ Заявки в работе и отложенные\n\nСписок пуст.",
                         attachments=[keyboard_to_attachment(get_back_button())]
                     )
                     return
@@ -1536,23 +1547,66 @@ async def handle_callback(event: MessageCallback):
                 # Создаем клавиатуру со списком заявок
                 tickets_kb = []
                 for ticket in tickets:
-                    shop = db.query(Shop).filter(Shop.id == ticket.shop_id).first()
-                    shop_name = shop.name if shop else f"Магазин #{ticket.shop_id}"
-                    
-                    button_text = f"#{ticket.id} - {ticket.title[:30]}"
-                    if len(ticket.title) > 30:
+                    st_mark = "⏸️ " if ticket.status == TicketStatus.POSTPONED else "⚙️ "
+                    photo_mark = "📷 " if ticket.photo_path else ""
+                    button_text = f"{st_mark}{photo_mark}#{ticket.id} - {ticket.title[:26]}"
+                    if len(ticket.title) > 26:
                         button_text += "..."
                     
                     tickets_kb.append([CallbackButton(text=button_text, payload=f'support_ticket_{ticket.id}')])
                 
                 tickets_kb.append([CallbackButton(text='◀️ Назад', payload='back_to_main')])
                 
-                message_text = f"⚙️ Заявки в работе\n\nВсего заявок в работе: {len(tickets)}\n\n"
+                scope = "все активные" if role == "director" else "ваши"
+                message_text = f"⚙️ В работе и отложенные ({scope})\n\nВсего: {len(tickets)}\n\n"
                 message_text += "Выберите заявку для управления:"
                 
                 await safe_answer_ui(event, max_id,
                     message_text,
                     attachments=[keyboard_to_attachment(tickets_kb)]
+                )
+            finally:
+                db.close()
+        elif callback_data == 'postponed_tickets':
+            # Только отложенные (дублирует фильтр в «В работе», но удобно для фокуса)
+            user_id = get_user_id_by_max_id(max_id)
+            if not user_id:
+                await safe_answer_ui(event, max_id, "Ошибка: пользователь не найден")
+                return
+            role = get_user_role(max_id)
+            if role != "support" and role != "director":
+                await safe_answer_ui(event, max_id, "Эта функция доступна только специалистам ТП")
+                return
+            db = next(get_db_session())
+            try:
+                q = db.query(Ticket).filter(Ticket.status == TicketStatus.POSTPONED)
+                if role == "director":
+                    tickets = q.order_by(Ticket.created_at.desc()).all()
+                else:
+                    tickets = q.filter(Ticket.assigned_to == user_id).order_by(Ticket.created_at.desc()).all()
+                if not tickets:
+                    await safe_answer_ui(
+                        event,
+                        max_id,
+                        "⏸️ Отложенные заявки\n\nСписок пуст.",
+                        attachments=[keyboard_to_attachment(get_back_button())],
+                    )
+                    return
+                tickets_kb = []
+                for ticket in tickets:
+                    photo_mark = "📷 " if ticket.photo_path else ""
+                    button_text = f"{photo_mark}#{ticket.id} - {ticket.title[:28]}"
+                    if len(ticket.title) > 28:
+                        button_text += "..."
+                    tickets_kb.append([CallbackButton(text=button_text, payload=f"support_ticket_{ticket.id}")])
+                tickets_kb.append([CallbackButton(text="◀️ Назад", payload="back_to_main")])
+                scope = "все" if role == "director" else "ваши"
+                message_text = f"⏸️ Отложенные ({scope})\n\nВсего: {len(tickets)}\n\nВыберите заявку:"
+                await safe_answer_ui(
+                    event,
+                    max_id,
+                    message_text,
+                    attachments=[keyboard_to_attachment(tickets_kb)],
                 )
             finally:
                 db.close()
@@ -1583,11 +1637,16 @@ async def handle_callback(event: MessageCallback):
                 
                 # Создаем клавиатуру с магазинами
                 shops_kb = []
+                _active_statuses = (
+                    TicketStatus.NEW,
+                    TicketStatus.IN_PROGRESS,
+                    TicketStatus.POSTPONED,
+                )
                 for shop in shops:
                     # Подсчитываем количество активных заявок для этого магазина
                     active_tickets = db.query(Ticket).filter(
                         Ticket.shop_id == shop.id,
-                        Ticket.status.in_([TicketStatus.NEW, TicketStatus.IN_PROGRESS])
+                        Ticket.status.in_(_active_statuses),
                     ).count()
                     
                     button_text = f"{shop.name}"
@@ -1621,7 +1680,9 @@ async def handle_callback(event: MessageCallback):
                 # Получаем активные заявки для этого магазина
                 tickets = db.query(Ticket).filter(
                     Ticket.shop_id == shop_id,
-                    Ticket.status.in_([TicketStatus.NEW, TicketStatus.IN_PROGRESS])
+                    Ticket.status.in_(
+                        [TicketStatus.NEW, TicketStatus.IN_PROGRESS, TicketStatus.POSTPONED]
+                    ),
                 ).order_by(Ticket.created_at.desc()).limit(20).all()
                 
                 if not tickets:
@@ -1634,8 +1695,15 @@ async def handle_callback(event: MessageCallback):
                 # Создаем клавиатуру со списком заявок
                 tickets_kb = []
                 for ticket in tickets:
-                    status_emoji = '🆕' if ticket.status == TicketStatus.NEW else '⚙️'
-                    button_text = f"{status_emoji} #{ticket.id} - {ticket.title[:28]}"
+                    status_emoji = (
+                        '🆕'
+                        if ticket.status == TicketStatus.NEW
+                        else '⏸️'
+                        if ticket.status == TicketStatus.POSTPONED
+                        else '⚙️'
+                    )
+                    photo_sfx = " 📷" if ticket.photo_path else ""
+                    button_text = f"{status_emoji}{photo_sfx} #{ticket.id} - {ticket.title[:24]}"
                     if len(ticket.title) > 28:
                         button_text += "..."
                     
@@ -1760,21 +1828,23 @@ async def handle_callback(event: MessageCallback):
                     if ticket.assigned_to != user_id:
                         manage_kb.append([CallbackButton(text='✅ Взять в работу', payload=f'assign_ticket_{ticket.id}')])
                 
-                if ticket.status == TicketStatus.IN_PROGRESS and ticket.assigned_to == user_id:
-                    # Если заявка в работе и назначена на этого специалиста, можно изменить статус
-                    manage_kb.append([CallbackButton(text='✅ Решить', payload=f'resolve_ticket_{ticket.id}')])
-                    manage_kb.append([CallbackButton(text='⏸️ Отложить', payload=f'postpone_ticket_{ticket.id}')])
+                if ticket.assigned_to == user_id:
+                    if ticket.status == TicketStatus.IN_PROGRESS:
+                        manage_kb.append([CallbackButton(text='✅ Решить', payload=f'resolve_ticket_{ticket.id}')])
+                        manage_kb.append([CallbackButton(text='⏸️ Отложить', payload=f'postpone_ticket_{ticket.id}')])
+                    elif ticket.status == TicketStatus.POSTPONED:
+                        manage_kb.append([CallbackButton(text='✅ Решить', payload=f'resolve_ticket_{ticket.id}')])
+                        manage_kb.append([CallbackButton(text='⚙️ Вернуть в работу', payload=f'reopen_ticket_{ticket.id}')])
                 
-                if ticket.status == TicketStatus.POSTPONED and ticket.assigned_to == user_id:
-                    # Если заявка отложена, можно вернуть в работу
-                    manage_kb.append([CallbackButton(text='⚙️ Вернуть в работу', payload=f'reopen_ticket_{ticket.id}')])
-                
-                manage_kb.append([CallbackButton(text='◀️ Назад', payload='new_tickets')])
+                manage_kb.append([CallbackButton(text='◀️ Назад', payload='in_progress_tickets')])
                 manage_kb.append([CallbackButton(text='🏠 Главное меню', payload='back_to_main')])
                 
                 await safe_answer_ui(event, max_id,
                     details_text,
                     attachments=[keyboard_to_attachment(manage_kb)]
+                )
+                await send_ticket_photo_to_max_user(
+                    bot, max_id, ticket.photo_path, f"📷 Заявка #{ticket.id}"
                 )
             finally:
                 db.close()

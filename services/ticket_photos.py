@@ -201,3 +201,47 @@ async def persist_ticket_photo_from_attachment(attachment: Any) -> str | None:
         return url
 
     return None
+
+
+def media_attachments_for_ticket_photo(photo_path: str | None) -> list:
+    """
+    Вложения MAX API для фото заявки (local:…, https URL или пропуск для uploaded/пусто).
+    Используется в send_message / safe_answer вместе с текстом.
+    """
+    if not photo_path:
+        return []
+    p = str(photo_path).strip()
+    if not p or p == "uploaded":
+        return []
+    try:
+        from maxapi.types.input_media import InputMedia
+    except ImportError:
+        return []
+    if p.startswith("local:"):
+        fname = local_photo_filename(p)
+        if not fname or not is_safe_ticket_photo_filename(fname):
+            return []
+        path = TICKET_PHOTOS_DIR / fname
+        if path.is_file():
+            return [InputMedia(str(path))]
+        return []
+    if p.startswith("http://") or p.startswith("https://"):
+        return [InputMedia(p)]
+    return []
+
+
+async def send_ticket_photo_to_max_user(bot, max_id: str, photo_path: str | None, caption: str = "") -> None:
+    """Отдельное сообщение с фото (если есть файл/URL), после текста с клавиатурой."""
+    att = media_attachments_for_ticket_photo(photo_path)
+    if not att:
+        return
+    try:
+        uid = int(str(max_id).strip())
+    except (TypeError, ValueError):
+        logger.warning("send_ticket_photo_to_max_user: некорректный max_id")
+        return
+    text = (caption or "").strip() or "📷 Фото к заявке"
+    try:
+        await bot.send_message(user_id=uid, text=text[:3900], attachments=att)
+    except Exception as e:
+        logger.warning("Не удалось отправить фото заявки user=%s: %s", uid, e)

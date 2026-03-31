@@ -5,7 +5,10 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from sqlalchemy import or_
+
 from models.user import User, UserRole
+from services.ticket_photos import media_attachments_for_ticket_photo
 
 if TYPE_CHECKING:
     from maxapi import Bot
@@ -14,10 +17,13 @@ logger = logging.getLogger(__name__)
 
 
 async def notify_specialists_new_ticket(bot: "Bot", db, ticket) -> None:
-    """Пуш специалистам о новой заявке (с учётом настроек)."""
+    """Пуш специалистам и директорам о новой заявке (с учётом настроек)."""
     specialists = (
         db.query(User)
-        .filter(User.role == UserRole.SUPPORT, User.notifications_enabled.is_(True))
+        .filter(
+            User.notifications_enabled.is_(True),
+            or_(User.role == UserRole.SUPPORT, User.role == UserRole.DIRECTOR),
+        )
         .all()
     )
     urgent = bool(getattr(ticket, "is_urgent", False))
@@ -41,7 +47,11 @@ async def notify_specialists_new_ticket(bot: "Bot", db, ticket) -> None:
             logger.warning("Пропуск уведомления: некорректный max_id у пользователя %s", u.id)
             continue
         try:
-            await bot.send_message(user_id=uid, text=body)
+            att = media_attachments_for_ticket_photo(getattr(ticket, "photo_path", None))
+            if att:
+                await bot.send_message(user_id=uid, text=body, attachments=att)
+            else:
+                await bot.send_message(user_id=uid, text=body)
         except Exception as e:
             logger.warning("Не удалось уведомить специалиста %s: %s", u.id, e)
 

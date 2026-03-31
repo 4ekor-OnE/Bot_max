@@ -36,8 +36,9 @@ from models.database import get_db_session
 from models.shop import Shop
 from models.ticket import Ticket, TicketStatus
 from models.user import User, UserRole
+from services.ticket_photos import send_ticket_photo_to_max_user
 from utils.keyboard_helper import keyboard_to_attachment
-from utils.safe_reply import safe_answer
+from utils.safe_reply import get_bot, safe_answer
 
 if TYPE_CHECKING:
     from maxapi.types.updates.message_callback import MessageCallback
@@ -473,6 +474,9 @@ async def admin_ticket_detail_message(event: MessageCallback, db: Session, tid: 
     ]
     kb.extend(admin_kb_home())
     await safe_answer(event, max_id, body, attachments=[keyboard_to_attachment(kb)])
+    bot = get_bot()
+    if bot:
+        await send_ticket_photo_to_max_user(bot, max_id, t.photo_path, f"📷 Заявка #{t.id}")
 
 
 async def handle_admin_callback(
