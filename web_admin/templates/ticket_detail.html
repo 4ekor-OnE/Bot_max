@@ -13,23 +13,28 @@
     <p>{{ ticket.title }}</p>
     <h2 class="h6">Описание</h2>
     <pre class="bg-light p-2 rounded small" style="white-space:pre-wrap;">{{ ticket.description }}</pre>
-    {% set photo = (ticket.photo_path or '')|trim %}
-    {% if photo %}
-    <h2 class="h6 mt-3">Фото к заявке</h2>
-    {% if photo.startswith('local:') %}
-    {% set fname = photo[6:] %}
-    <p class="mb-2"><a href="{{ url_for('ticket_photo_file', filename=fname) }}" target="_blank" rel="noopener noreferrer">Открыть в новой вкладке</a></p>
-    <div class="border rounded p-2 bg-white">
-      <img src="{{ url_for('ticket_photo_file', filename=fname) }}" alt="Фото к заявке" class="img-fluid rounded" style="max-height: min(70vh, 640px); width: auto;" loading="lazy">
+    {% if photo_paths %}
+    <h2 class="h6 mt-3">Фото к заявке ({{ photo_paths|length }})</h2>
+    {% for photo in photo_paths %}
+    {% set photo = (photo or '')|trim %}
+    <div class="mb-4 {% if not loop.last %}border-bottom pb-3{% endif %}">
+      <p class="small text-muted mb-1">Вложение {{ loop.index }} / {{ photo_paths|length }}</p>
+      {% if photo.startswith('local:') %}
+      {% set fname = photo[6:] %}
+      <p class="mb-2"><a href="{{ url_for('ticket_photo_file', filename=fname) }}" target="_blank" rel="noopener noreferrer">Открыть в новой вкладке</a></p>
+      <div class="border rounded p-2 bg-white">
+        <img src="{{ url_for('ticket_photo_file', filename=fname) }}" alt="Фото {{ loop.index }}" class="img-fluid rounded" style="max-height: min(70vh, 640px); width: auto;" loading="lazy">
+      </div>
+      {% elif photo.startswith('http://') or photo.startswith('https://') %}
+      <p class="mb-2"><a href="{{ photo }}" target="_blank" rel="noopener noreferrer">Открыть оригинал в новой вкладке</a></p>
+      <div class="border rounded p-2 bg-white">
+        <img src="{{ photo }}" alt="Фото {{ loop.index }}" class="img-fluid rounded" style="max-height: min(70vh, 640px); width: auto;" loading="lazy" referrerpolicy="no-referrer">
+      </div>
+      {% else %}
+      <p class="text-muted small mb-0">Фото без ссылки (старая заявка). Пересоздайте вложение при необходимости.</p>
+      {% endif %}
     </div>
-    {% elif photo.startswith('http://') or photo.startswith('https://') %}
-    <p class="mb-2"><a href="{{ photo }}" target="_blank" rel="noopener noreferrer">Открыть оригинал в новой вкладке</a></p>
-    <div class="border rounded p-2 bg-white">
-      <img src="{{ photo }}" alt="Фото к заявке" class="img-fluid rounded" style="max-height: min(70vh, 640px); width: auto;" loading="lazy" referrerpolicy="no-referrer">
-    </div>
-    {% else %}
-    <p class="text-muted small mb-0">Фото сохранено без ссылки (старая заявка). Новые заявки сохраняют копию файла на сервере — пересоздайте вложение или приложите фото заново.</p>
-    {% endif %}
+    {% endfor %}
     {% endif %}
   </div>
 </div>

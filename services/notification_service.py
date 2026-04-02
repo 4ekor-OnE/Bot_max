@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import or_
 
 from models.user import User, UserRole
-from services.ticket_photos import media_attachments_for_ticket_photo
+from services.ticket_photos import list_photo_paths_for_ticket, media_attachments_for_ticket_photo
 
 if TYPE_CHECKING:
     from maxapi import Bot
@@ -47,11 +47,15 @@ async def notify_specialists_new_ticket(bot: "Bot", db, ticket) -> None:
             logger.warning("Пропуск уведомления: некорректный max_id у пользователя %s", u.id)
             continue
         try:
-            att = media_attachments_for_ticket_photo(getattr(ticket, "photo_path", None))
-            if att:
-                await bot.send_message(user_id=uid, text=body, attachments=att)
-            else:
-                await bot.send_message(user_id=uid, text=body)
+            await bot.send_message(user_id=uid, text=body)
+            paths = list_photo_paths_for_ticket(db, ticket)
+            n = len(paths)
+            for i, path in enumerate(paths, 1):
+                att = media_attachments_for_ticket_photo(path)
+                if not att:
+                    continue
+                cap = f"📷 Заявка #{ticket.id}" + (f" ({i}/{n})" if n > 1 else "")
+                await bot.send_message(user_id=uid, text=cap, attachments=att)
         except Exception as e:
             logger.warning("Не удалось уведомить специалиста %s: %s", u.id, e)
 

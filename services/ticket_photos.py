@@ -10,7 +10,7 @@ from typing import Any
 
 import aiohttp
 
-from config import BOT_TOKEN, TICKET_PHOTO_MAX_BYTES, TICKET_PHOTOS_DIR
+from config import BOT_TOKEN, TICKET_MAX_PHOTOS, TICKET_PHOTO_MAX_BYTES, TICKET_PHOTOS_DIR
 from services.instruction_files import download_url_to_file
 
 logger = logging.getLogger(__name__)
@@ -40,6 +40,63 @@ def is_safe_ticket_photo_filename(name: str) -> bool:
 
 def is_image_attachment(attachment: Any) -> bool:
     return _attachment_type_str(attachment) == "image"
+
+
+def collect_image_attachments_from_message(message: Any) -> list:
+    """Все вложения-изображения из тела сообщения (порядок сохраняется)."""
+    out: list = []
+    try:
+        body = getattr(message, "body", None)
+        attachments = getattr(body, "attachments", None) or []
+        for attachment in attachments:
+            if is_image_attachment(attachment):
+                out.append(attachment)
+    except Exception:
+        logger.debug("collect_image_attachments_from_message: не удалось прочитать вложения", exc_info=True)
+    return out
+
+
+def list_photo_paths_for_ticket(db, ticket) -> list[str]:
+    """Пути фото заявки: из ticket_attachments, иначе fallback на legacy photo_path."""
+    from models.ticket_attachment import TicketAttachment
+
+    tid = getattr(ticket, "id", None)
+    if tid is None:
+        return []
+    rows = (
+        db.query(TicketAttachment)
+        .filter(TicketAttachment.ticket_id == tid)
+        .order_by(TicketAttachment.position.asc(), TicketAttachment.id.asc())
+        .all()
+    )
+    if rows:
+        return [
+            str(r.path).strip()
+            for r in rows
+            if r.path and str(r.path).strip() and str(r.path).strip().lower() != "uploaded"
+        ]
+    p = (getattr(ticket, "photo_path", None) or "").strip()
+    if p and p.lower() != "uploaded":
+        return [p]
+    return []
+
+
+def fsm_normalize_photo_paths(fsm_data: dict) -> list[str]:
+    """Список путей из FSM (photo_paths или старый photo_path), с лимитом."""
+    raw = fsm_data.get("photo_paths")
+    out: list[str] = []
+    if isinstance(raw, list):
+        for p in raw:
+            s = str(p).strip() if p is not None else ""
+            if s and s.lower() != "uploaded":
+                out.append(s)
+    else:
+        legacy = fsm_data.get("photo_path")
+        if legacy:
+            s = str(legacy).strip()
+            if s and s.lower() != "uploaded":
+                out.append(s)
+    return out[:TICKET_MAX_PHOTOS]
 
 
 def _attachment_type_str(attachment: Any) -> str:
@@ -245,3 +302,20 @@ async def send_ticket_photo_to_max_user(bot, max_id: str, photo_path: str | None
         await bot.send_message(user_id=uid, text=text[:3900], attachments=att)
     except Exception as e:
         logger.warning("Не удалось отправить фото заявки user=%s: %s", uid, e)
+
+
+async def send_all_ticket_photos_to_max_user(
+    bot,
+    max_id: str,
+    paths: list[str] | None,
+    caption_prefix: str = "",
+) -> None:
+    """Отправляет по одному сообщению на каждое фото (после текста карточки)."""
+    clean = [p for p in (paths or []) if p and str(p).strip().lower() not in ("", "uploaded")]
+    if not clean:
+        return
+    n = len(clean)
+    base = (caption_prefix or "").strip() or "📷 Фото к заявке"
+    for i, path in enumerate(clean, 1):
+        cap = base if n == 1 else f"{base} ({i}/{n})"
+        await send_ticket_photo_to_max_user(bot, max_id, path, cap)

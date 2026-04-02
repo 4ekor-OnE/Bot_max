@@ -7,7 +7,14 @@ from maxapi.enums.upload_type import UploadType
 from maxapi.types import MessageCreated, MessageCallback
 from maxapi.types.input_media import InputMediaBuffer
 from maxapi.utils.message import process_input_media
-from config import BOT_TOKEN, verify_admin_password, ensure_data_dirs, INSTRUCTIONS_DIR, MAX_MESSAGE_TEXT_LENGTH
+from config import (
+    BOT_TOKEN,
+    MAX_MESSAGE_TEXT_LENGTH,
+    TICKET_MAX_PHOTOS,
+    ensure_data_dirs,
+    INSTRUCTIONS_DIR,
+    verify_admin_password,
+)
 from utils.max_user import (
     max_user_id_from_message_callback,
     max_user_id_from_message_created,
@@ -17,7 +24,8 @@ from models.database import init_db, get_db_session
 from models.user import User, UserRole
 from models.shop import Shop
 from models.category import Category
-from models.ticket import Ticket, TicketStatus, TicketPriority
+from models.ticket import Ticket, TicketPriority, TicketStatus
+from models.ticket_attachment import TicketAttachment
 from models.instruction_document import InstructionDocument
 from models.ticket_comment import TicketComment
 from datetime import datetime, timedelta, timezone
@@ -31,9 +39,12 @@ from services.notification_service import (
     notify_user_status_change,
 )
 from services.ticket_photos import (
+    collect_image_attachments_from_message,
+    fsm_normalize_photo_paths,
     is_image_attachment,
+    list_photo_paths_for_ticket,
     persist_ticket_photo_from_attachment,
-    send_ticket_photo_to_max_user,
+    send_all_ticket_photos_to_max_user,
 )
 from app.fsm import FSM, FSMState
 from app.admin_panel import handle_admin_callback, process_admin_text
@@ -164,7 +175,7 @@ async def show_filtered_tickets(user_id: int, status_filter: str = None, event=N
             }.get(ticket.status, '📋')
             
             cd = ticket.created_at.strftime("%d.%m") if ticket.created_at else ""
-            photo_mark = " 📷" if ticket.photo_path else ""
+            photo_mark = " 📷" if list_photo_paths_for_ticket(db, ticket) else ""
             title_cut = (ticket.title or "")[:22] + ("…" if len(ticket.title or "") > 22 else "")
             button_text = f"{status_emoji} #{ticket.id} {cd}{photo_mark} {title_cut}"
             
@@ -247,7 +258,8 @@ async def create_ticket_from_fsm(user_id: int, max_id: str, event):
             shop = db.query(Shop).filter(Shop.id == fsm_data['shop_id']).first()
             shop_name = shop.name if shop else f"Магазин #{fsm_data['shop_id']}"
             
-            # Создаем заявку
+            photo_paths = fsm_normalize_photo_paths(fsm_data)
+            first_photo = photo_paths[0] if photo_paths else None
             ticket = Ticket(
                 user_id=user_id,
                 shop_id=fsm_data['shop_id'],
@@ -257,10 +269,13 @@ async def create_ticket_from_fsm(user_id: int, max_id: str, event):
                 is_urgent=is_urgent,
                 status=TicketStatus.NEW,
                 priority=priority,
-                photo_path=fsm_data.get('photo_path'),  # Может быть None
-                sla_deadline=datetime.now(timezone.utc) + timedelta(hours=sla_hours)
+                photo_path=first_photo,
+                sla_deadline=datetime.now(timezone.utc) + timedelta(hours=sla_hours),
             )
             db.add(ticket)
+            db.flush()
+            for i, path in enumerate(photo_paths):
+                db.add(TicketAttachment(ticket_id=ticket.id, path=path, position=i))
             db.commit()
             db.refresh(ticket)
             ticket_id = ticket.id
@@ -283,7 +298,8 @@ async def create_ticket_from_fsm(user_id: int, max_id: str, event):
         # Отправляем подтверждение
         role = get_user_role(max_id)
         keyboard = get_main_menu_keyboard(role)
-        photo_text = "📷 Фото прикреплено" if fsm_data.get('photo_path') else ""
+        _pn = len(fsm_normalize_photo_paths(fsm_data))
+        photo_text = f"📷 Фото: {_pn} шт." if _pn else ""
         urgent_hdr = "🚨 Срочная заявка\n\n" if fsm_data.get("urgent_ticket") else ""
         pr_line = ""
         if fsm_data.get("urgent_ticket"):
@@ -321,7 +337,8 @@ def format_ticket_confirmation_summary(fsm_data: dict) -> str:
     """Текст шага подтверждения (ТЗ п. 4.1)."""
     urgent = fsm_data.get("urgent_ticket")
     head = "🚨 Срочная заявка — подтверждение\n\n" if urgent else "📝 Подтверждение заявки\n\n"
-    photo = "да" if fsm_data.get("photo_path") else "нет"
+    _pc = len(fsm_normalize_photo_paths(fsm_data))
+    photo = f"{_pc} шт." if _pc else "нет"
     lines = [
         head,
         f"🏪 Магазин: {fsm_data.get('shop_name', '—')}",
@@ -625,35 +642,56 @@ async def handle_message_with_photo(event: MessageCreated):
         max_id = max_user_id_from_message_created(event)
         if not max_id:
             return
-        
+
         user_id = get_user_id_by_max_id(max_id)
         if not user_id:
             return
-        
-        # Проверяем FSM состояние
+
         state = FSM.get_state(user_id)
         if state == FSMState.ADD_PHOTO.value:
-            try:
-                photo_ref = await persist_ticket_photo_from_attachment(image_attachment)
-            except Exception:
-                logger.exception("Не удалось сохранить фото заявки для user_id %s", user_id)
-                photo_ref = None
-            logger.info(
-                "Получено фото для user_id %s, сохранено как: %s",
-                user_id,
-                photo_ref or "uploaded",
-            )
-            
-            # Сохраняем URL, local:файл или метку «uploaded»
-            fsm_data = FSM.get_data(user_id)
-            fsm_data = fsm_data.copy()
-            fsm_data['photo_path'] = photo_ref or 'uploaded'
+            imgs = collect_image_attachments_from_message(event.message)
+            if not imgs:
+                imgs = [image_attachment]
+            fsm_data = FSM.get_data(user_id).copy()
+            paths = fsm_data.get("photo_paths")
+            if not isinstance(paths, list):
+                paths = []
+            added = 0
+            for att in imgs:
+                if len(paths) >= TICKET_MAX_PHOTOS:
+                    break
+                try:
+                    photo_ref = await persist_ticket_photo_from_attachment(att)
+                except Exception:
+                    logger.exception("Не удалось сохранить фото заявки для user_id %s", user_id)
+                    photo_ref = None
+                if photo_ref and str(photo_ref).strip().lower() != "uploaded":
+                    paths.append(photo_ref)
+                    added += 1
+            fsm_data["photo_paths"] = paths
+            fsm_data.pop("photo_path", None)
             FSM.set_state(user_id, FSMState.ADD_PHOTO.value, fsm_data)
-            
-            # Подтверждение перед созданием
-            await show_ticket_confirmation(user_id, max_id, event)
+            done_kb = [
+                [CallbackButton(text="✅ Готово", payload="add_photo_done")],
+                [CallbackButton(text="◀️ Назад", payload="back_to_main")],
+            ]
+            if not added:
+                await event.message.answer(
+                    "Не удалось сохранить фото. Попробуйте другое изображение.",
+                    attachments=[keyboard_to_attachment(done_kb)],
+                )
+            elif len(paths) >= TICKET_MAX_PHOTOS:
+                await event.message.answer(
+                    f"Достигнут лимит фото ({TICKET_MAX_PHOTOS}). Нажмите «Готово» для подтверждения заявки.",
+                    attachments=[keyboard_to_attachment(done_kb)],
+                )
+            else:
+                await event.message.answer(
+                    f"Сохранено фото: {len(paths)} (макс. {TICKET_MAX_PHOTOS}). "
+                    "Отправьте ещё или нажмите «Готово».",
+                    attachments=[keyboard_to_attachment(done_kb)],
+                )
         else:
-            # Фото отправлено не в процессе создания заявки
             await event.message.answer("Фото получено, но сейчас не ожидается загрузка фото.")
         return
     
@@ -1156,8 +1194,9 @@ async def handle_callback(event: MessageCallback):
                         sn = raw_t[:280] + ("…" if len(raw_t) > 280 else "")
                         details_text += f"• {label}: {sn}\n"
                 
-                if ticket.photo_path:
-                    details_text += f"📷 Фото: прикреплено\n"
+                _paths_u = list_photo_paths_for_ticket(db, ticket)
+                if _paths_u:
+                    details_text += f"📷 Фото: {len(_paths_u)} шт.\n"
                 
                 if ticket.resolved_at:
                     resolved_date = ticket.resolved_at.strftime('%d.%m.%Y %H:%M')
@@ -1171,8 +1210,8 @@ async def handle_callback(event: MessageCallback):
                     details_text,
                     attachments=[keyboard_to_attachment(details_kb)]
                 )
-                await send_ticket_photo_to_max_user(
-                    bot, max_id, ticket.photo_path, f"📷 Заявка #{ticket.id}"
+                await send_all_ticket_photos_to_max_user(
+                    bot, max_id, _paths_u, f"📷 Заявка #{ticket.id}"
                 )
             finally:
                 db.close()
@@ -1496,7 +1535,7 @@ async def handle_callback(event: MessageCallback):
                     button_text = f"{priority_emoji} #{ticket.id} - {ticket.title[:22]}"
                     if ticket.is_urgent:
                         button_text = f"🚨 {button_text}"
-                    if ticket.photo_path:
+                    if list_photo_paths_for_ticket(db, ticket):
                         button_text = f"📷 {button_text}"
                     if len(ticket.title) > 22:
                         button_text += "..."
@@ -1548,7 +1587,7 @@ async def handle_callback(event: MessageCallback):
                 tickets_kb = []
                 for ticket in tickets:
                     st_mark = "⏸️ " if ticket.status == TicketStatus.POSTPONED else "⚙️ "
-                    photo_mark = "📷 " if ticket.photo_path else ""
+                    photo_mark = "📷 " if list_photo_paths_for_ticket(db, ticket) else ""
                     button_text = f"{st_mark}{photo_mark}#{ticket.id} - {ticket.title[:26]}"
                     if len(ticket.title) > 26:
                         button_text += "..."
@@ -1594,7 +1633,7 @@ async def handle_callback(event: MessageCallback):
                     return
                 tickets_kb = []
                 for ticket in tickets:
-                    photo_mark = "📷 " if ticket.photo_path else ""
+                    photo_mark = "📷 " if list_photo_paths_for_ticket(db, ticket) else ""
                     button_text = f"{photo_mark}#{ticket.id} - {ticket.title[:28]}"
                     if len(ticket.title) > 28:
                         button_text += "..."
@@ -1702,7 +1741,7 @@ async def handle_callback(event: MessageCallback):
                         if ticket.status == TicketStatus.POSTPONED
                         else '⚙️'
                     )
-                    photo_sfx = " 📷" if ticket.photo_path else ""
+                    photo_sfx = " 📷" if list_photo_paths_for_ticket(db, ticket) else ""
                     button_text = f"{status_emoji}{photo_sfx} #{ticket.id} - {ticket.title[:24]}"
                     if len(ticket.title) > 28:
                         button_text += "..."
@@ -1789,8 +1828,9 @@ async def handle_callback(event: MessageCallback):
                 else:
                     details_text += f"👨‍💼 Назначена на: не назначена\n"
                 
-                if ticket.photo_path:
-                    details_text += f"📷 Фото: прикреплено\n"
+                _paths_s = list_photo_paths_for_ticket(db, ticket)
+                if _paths_s:
+                    details_text += f"📷 Фото: {len(_paths_s)} шт.\n"
                 
                 if ticket.sla_deadline:
                     sla_date = ticket.sla_deadline.strftime('%d.%m.%Y %H:%M')
@@ -1843,8 +1883,8 @@ async def handle_callback(event: MessageCallback):
                     details_text,
                     attachments=[keyboard_to_attachment(manage_kb)]
                 )
-                await send_ticket_photo_to_max_user(
-                    bot, max_id, ticket.photo_path, f"📷 Заявка #{ticket.id}"
+                await send_all_ticket_photos_to_max_user(
+                    bot, max_id, _paths_s, f"📷 Заявка #{ticket.id}"
                 )
             finally:
                 db.close()
@@ -2708,23 +2748,40 @@ async def handle_callback(event: MessageCallback):
             )
             logger.info(f"Сообщение с запросом заголовка отправлено")
         elif callback_data == 'add_photo_yes':
-            # Пользователь хочет прикрепить фото - оставляем состояние ADD_PHOTO
+            # Пользователь хочет прикрепить фото (можно несколько)
             user_id = get_user_id_by_max_id(max_id)
             if not user_id:
                 await safe_answer_ui(event, max_id,"Ошибка: пользователь не найден")
                 return
             
-            # Убеждаемся, что состояние ADD_PHOTO установлено
-            fsm_data = FSM.get_data(user_id)
+            fsm_data = FSM.get_data(user_id).copy()
+            fsm_data["photo_paths"] = []
+            fsm_data.pop("photo_path", None)
             FSM.set_state(user_id, FSMState.ADD_PHOTO.value, fsm_data)
             _hdr = "🚨 Срочная заявка\n\n" if fsm_data.get("urgent_ticket") else "📝 Создание заявки\n\n"
-            await safe_answer_ui(event, max_id,
-                f"{_hdr}📷 Отправьте фото или нажмите «Пропустить»",
-                attachments=[keyboard_to_attachment([
-                    [CallbackButton(text='⏭️ Пропустить', payload='add_photo_no')],
-                    [CallbackButton(text='◀️ Назад', payload='back_to_main')]
-                ])]
+            await safe_answer_ui(
+                event,
+                max_id,
+                f"{_hdr}📷 Отправьте одно или несколько фото (в одном или нескольких сообщениях). "
+                f"Максимум {TICKET_MAX_PHOTOS} шт. Когда закончите — нажмите «Готово».",
+                attachments=[
+                    keyboard_to_attachment(
+                        [
+                            [CallbackButton(text="✅ Готово", payload="add_photo_done")],
+                            [CallbackButton(text="◀️ Назад", payload="back_to_main")],
+                        ]
+                    )
+                ],
             )
+        elif callback_data == 'add_photo_done':
+            user_id = get_user_id_by_max_id(max_id)
+            if not user_id:
+                await safe_answer_ui(event, max_id, "Ошибка: пользователь не найден")
+                return
+            if FSM.get_state(user_id) != FSMState.ADD_PHOTO.value:
+                await safe_answer_ui(event, max_id, "Сначала выберите «Да, прикрепить фото» или начните заявку заново.")
+                return
+            await show_ticket_confirmation(user_id, max_id, event)
         elif callback_data == 'add_photo_no':
             # Пользователь пропустил фото — экран подтверждения
             user_id = get_user_id_by_max_id(max_id)
@@ -2732,6 +2789,10 @@ async def handle_callback(event: MessageCallback):
                 await safe_answer_ui(event, max_id,"Ошибка: пользователь не найден")
                 return
             
+            fsm_data = FSM.get_data(user_id).copy()
+            fsm_data["photo_paths"] = []
+            fsm_data.pop("photo_path", None)
+            FSM.set_state(user_id, FSMState.ADD_PHOTO.value, fsm_data)
             await show_ticket_confirmation(user_id, max_id, event)
         elif callback_data == 'ticket_confirm_submit':
             user_id = get_user_id_by_max_id(max_id)

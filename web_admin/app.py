@@ -18,11 +18,12 @@ from flask import (
 from sqlalchemy import func
 
 from config import TICKET_PHOTOS_DIR, ensure_data_dirs, verify_admin_password
-from services.ticket_photos import is_safe_ticket_photo_filename
+from services.ticket_photos import is_safe_ticket_photo_filename, list_photo_paths_for_ticket
 from models.category import Category
 from models.database import SessionLocal, init_db
 from models.shop import Shop
 from models.ticket import Ticket, TicketStatus
+from models.ticket_attachment import TicketAttachment
 from models.ticket_comment import TicketComment
 from models.user import User, UserRole
 
@@ -315,6 +316,16 @@ def create_app() -> Flask:
                 q = q.filter(Ticket.shop_id == int(shop_f))
             raw = q.limit(200).all()
             shop_map = {s.id: s.name for s in db.query(Shop).all()}
+            ids = [t.id for t in raw]
+            with_att: set[int] = set()
+            if ids:
+                with_att = {
+                    r[0]
+                    for r in db.query(TicketAttachment.ticket_id)
+                    .filter(TicketAttachment.ticket_id.in_(ids))
+                    .distinct()
+                    .all()
+                }
             tickets = [
                 type(
                     "T",
@@ -325,7 +336,7 @@ def create_app() -> Flask:
                         "title": t.title,
                         "created_at": t.created_at,
                         "shop_name": shop_map.get(t.shop_id, str(t.shop_id)),
-                        "has_photo": bool(t.photo_path),
+                        "has_photo": (t.id in with_att) or bool((t.photo_path or "").strip()),
                     },
                 )()
                 for t in raw
@@ -384,6 +395,7 @@ def create_app() -> Flask:
                 .limit(50)
                 .all()
             )
+            photo_paths = list_photo_paths_for_ticket(db, ticket)
         finally:
             db.close()
         statuses = [s.value for s in TicketStatus]
@@ -393,6 +405,7 @@ def create_app() -> Flask:
             shop=shop,
             category=category,
             comments=comments,
+            photo_paths=photo_paths,
             statuses=statuses,
         )
 

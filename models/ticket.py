@@ -37,3 +37,10 @@ class Ticket(Base):
     created_at = Column(DateTime, server_default=func.now())
     resolved_at = Column(DateTime, nullable=True)
     sla_deadline = Column(DateTime, nullable=True)
+
+    photo_attachments = relationship(
+        "TicketAttachment",
+        back_populates="ticket",
+        order_by="TicketAttachment.position",
+        cascade="all, delete-orphan",
+    )

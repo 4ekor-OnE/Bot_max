@@ -22,6 +22,8 @@ TICKET_PHOTOS_DIR = Path(
 ).resolve()
 INSTRUCTION_MAX_BYTES = int(os.getenv("INSTRUCTION_MAX_BYTES", str(20 * 1024 * 1024)))
 TICKET_PHOTO_MAX_BYTES = int(os.getenv("TICKET_PHOTO_MAX_BYTES", str(15 * 1024 * 1024)))
+# Максимум фото к одной заявке (создание в боте)
+TICKET_MAX_PHOTOS = max(1, min(50, int(os.getenv("TICKET_MAX_PHOTOS", "20"))))
 
 # Лимит текста сообщений MAX API (см. ТЗ п. 7)
 MAX_MESSAGE_TEXT_LENGTH = int(os.getenv("MAX_MESSAGE_TEXT_LENGTH", "4000"))

@@ -36,7 +36,7 @@ from models.database import get_db_session
 from models.shop import Shop
 from models.ticket import Ticket, TicketStatus
 from models.user import User, UserRole
-from services.ticket_photos import send_ticket_photo_to_max_user
+from services.ticket_photos import list_photo_paths_for_ticket, send_all_ticket_photos_to_max_user
 from utils.keyboard_helper import keyboard_to_attachment
 from utils.safe_reply import get_bot, safe_answer
 
@@ -476,7 +476,8 @@ async def admin_ticket_detail_message(event: MessageCallback, db: Session, tid: 
     await safe_answer(event, max_id, body, attachments=[keyboard_to_attachment(kb)])
     bot = get_bot()
     if bot:
-        await send_ticket_photo_to_max_user(bot, max_id, t.photo_path, f"📷 Заявка #{t.id}")
+        paths = list_photo_paths_for_ticket(db, t)
+        await send_all_ticket_photos_to_max_user(bot, max_id, paths, f"📷 Заявка #{t.id}")
 
 
 async def handle_admin_callback(
