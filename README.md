@@ -36,7 +36,9 @@ cd max_support_bot
 
 Переменные: `WEB_ADMIN_HOST`, `WEB_ADMIN_PORT`, `WEB_ADMIN_SECRET_KEY`, опционально `WEB_ADMIN_DEBUG=1`. Для доступа из интернета — **только за reverse proxy (HTTPS)** и ограничение по IP/firewall; не открывайте порт напрямую без TLS.
 
-На **VPS / своём ПК** достаточно venv и `bot.py` под systemd/supervisor (пример unit: `deploy/systemd/max-support-bot.service.example`). На **хостинге Джино** после `git clone` / `git pull` можно выполнить **`./deploy/jino_deploy.sh`** — обновит venv и зависимости; подробности и ссылки на справку Джино — в **`DEPLOY.md`**.
+На **VPS / своём ПК** достаточно venv и `bot.py` под systemd/supervisor (пример unit: `deploy/systemd/max-support-bot.service.example`).
+
+На **хостинге Джино** после `git clone` или `git pull` из корня проекта: **`chmod +x deploy/jino_deploy.sh`** и **`./deploy/jino_deploy.sh`** — создаст/проверит `.venv`, поставит зависимости из `requirements.txt`, создаст `data/instructions`, `data/temp`, `data/ticket_photos`. Файл **`.env`** на сервер нужно создать отдельно. Полное описание, ссылки на документацию Джино и состав каталога **`deploy/`** — в **`DEPLOY.md`**.
 
 ## Команды
 

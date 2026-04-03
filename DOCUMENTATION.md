@@ -25,7 +25,7 @@
 | `data/instructions/` | Файлы документов инструкций (не коммитятся, кроме `.gitkeep`) |
 | `data/temp/` | Временные файлы |
 | `data/ticket_photos/` | Копии фото заявок для отображения в панели управления |
-| `deploy/` | Скрипт развёртывания на хостинге Джино (`jino_deploy.sh`) и пример unit systemd |
+| `deploy/` | **`jino_deploy.sh`** — после `git pull` на Джино: создание/проверка `.venv`, установка зависимостей через `python -m pip`, каталоги `data/*`; **`systemd/max-support-bot.service.example`** — пример unit для VPS (см. **`DEPLOY.md`**) |
 
 ## 3. Переменные окружения
 
@@ -138,7 +138,16 @@ WEB_ADMIN_HOST=0.0.0.0 .venv/bin/python -m web_admin
 
 ### Развёртывание на Джино (Jino.ru)
 
-После `git pull` на сервере: **`./deploy/jino_deploy.sh`** (создаёт/обновляет `.venv`, зависимости, каталоги `data/*`). Подробности и ссылки на справку Джино — в **`DEPLOY.md`**. Пример **systemd** для VPS: **`deploy/systemd/max-support-bot.service.example`**.
+Из корня репозитория после `git pull`:
+
+```bash
+chmod +x deploy/jino_deploy.sh
+./deploy/jino_deploy.sh
+```
+
+Скрипт не подменяет `.env`: его нужно выложить на сервер вручную (из `.env.example`). Опционально перед запуском можно задать **`PYTHON`** (интерпретатор для `python -m venv`, по умолчанию `python3`) и **`VENV`** (путь к каталогу venv, по умолчанию `./.venv`).
+
+Пошаговая инструкция, ссылки на справку Джино и таблица файлов в **`deploy/`** — в **`DEPLOY.md`**. Для VPS без shared-окружения используйте **`deploy/systemd/max-support-bot.service.example`**.
 
 ### Очистка и статистика
 
