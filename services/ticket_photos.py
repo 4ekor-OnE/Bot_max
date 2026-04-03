@@ -56,8 +56,63 @@ def collect_image_attachments_from_message(message: Any) -> list:
     return out
 
 
+def expand_legacy_ticket_photo_path_field(value: str | None) -> list[str]:
+    """
+    Разбор поля tickets.photo_path, если вложений в ticket_attachments нет (или все отброшены):
+    одна ссылка local:/https, JSON-массив путей, несколько строк или пути через запятую.
+    """
+    if not value:
+        return []
+    p = str(value).strip()
+    if not p or p.lower() == "uploaded":
+        return []
+    if p.startswith("["):
+        try:
+            data = json.loads(p)
+            if isinstance(data, list):
+                out: list[str] = []
+                for x in data:
+                    s = str(x).strip() if x is not None else ""
+                    if s and s.lower() != "uploaded":
+                        out.append(s)
+                return out[:TICKET_MAX_PHOTOS]
+        except json.JSONDecodeError:
+            pass
+    if "\n" in p:
+        parts = [
+            ln.strip()
+            for ln in p.splitlines()
+            if ln.strip() and ln.strip().lower() != "uploaded"
+        ]
+        if len(parts) > 1:
+            return parts[:TICKET_MAX_PHOTOS]
+    if "," in p:
+        parts = [x.strip() for x in p.split(",") if x.strip() and x.strip().lower() != "uploaded"]
+        if len(parts) > 1 and all(
+            x.startswith(("local:", "http://", "https://")) for x in parts
+        ):
+            return parts[:TICKET_MAX_PHOTOS]
+    return [p]
+
+
+def normalize_paths_from_attachment_raw_paths(raw_paths: list[str | None]) -> list[str]:
+    """Пути из строк ticket_attachments.path (одна строка может быть JSON-массивом путей)."""
+    out: list[str] = []
+    for raw in raw_paths:
+        s = str(raw).strip() if raw is not None else ""
+        if not s or s.lower() == "uploaded":
+            continue
+        if s.startswith("["):
+            out.extend(expand_legacy_ticket_photo_path_field(s))
+        else:
+            out.append(s)
+        if len(out) >= TICKET_MAX_PHOTOS:
+            break
+    return out[:TICKET_MAX_PHOTOS]
+
+
 def list_photo_paths_for_ticket(db, ticket) -> list[str]:
-    """Пути фото заявки: из ticket_attachments, иначе fallback на legacy photo_path."""
+    """Пути фото заявки: ticket_attachments (по порядку), иначе разбор legacy tickets.photo_path."""
     from models.ticket_attachment import TicketAttachment
 
     tid = getattr(ticket, "id", None)
@@ -69,16 +124,10 @@ def list_photo_paths_for_ticket(db, ticket) -> list[str]:
         .order_by(TicketAttachment.position.asc(), TicketAttachment.id.asc())
         .all()
     )
-    if rows:
-        return [
-            str(r.path).strip()
-            for r in rows
-            if r.path and str(r.path).strip() and str(r.path).strip().lower() != "uploaded"
-        ]
-    p = (getattr(ticket, "photo_path", None) or "").strip()
-    if p and p.lower() != "uploaded":
-        return [p]
-    return []
+    from_rows = normalize_paths_from_attachment_raw_paths([r.path for r in rows])
+    if from_rows:
+        return from_rows
+    return expand_legacy_ticket_photo_path_field(getattr(ticket, "photo_path", None))
 
 
 def fsm_normalize_photo_paths(fsm_data: dict) -> list[str]:

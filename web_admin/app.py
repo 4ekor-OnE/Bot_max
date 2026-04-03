@@ -18,7 +18,12 @@ from flask import (
 from sqlalchemy import func
 
 from config import TICKET_PHOTOS_DIR, ensure_data_dirs, verify_admin_password
-from services.ticket_photos import is_safe_ticket_photo_filename, list_photo_paths_for_ticket
+from services.ticket_photos import (
+    expand_legacy_ticket_photo_path_field,
+    is_safe_ticket_photo_filename,
+    list_photo_paths_for_ticket,
+    normalize_paths_from_attachment_raw_paths,
+)
 from models.category import Category
 from models.database import SessionLocal, init_db
 from models.shop import Shop
@@ -317,30 +322,40 @@ def create_app() -> Flask:
             raw = q.limit(200).all()
             shop_map = {s.id: s.name for s in db.query(Shop).all()}
             ids = [t.id for t in raw]
-            with_att: set[int] = set()
+            att_by_tid: dict[int, list] = {}
             if ids:
-                with_att = {
-                    r[0]
-                    for r in db.query(TicketAttachment.ticket_id)
+                for att in (
+                    db.query(TicketAttachment)
                     .filter(TicketAttachment.ticket_id.in_(ids))
-                    .distinct()
+                    .order_by(
+                        TicketAttachment.ticket_id,
+                        TicketAttachment.position.asc(),
+                        TicketAttachment.id.asc(),
+                    )
                     .all()
-                }
-            tickets = [
-                type(
-                    "T",
-                    (),
-                    {
-                        "id": t.id,
-                        "status": t.status,
-                        "title": t.title,
-                        "created_at": t.created_at,
-                        "shop_name": shop_map.get(t.shop_id, str(t.shop_id)),
-                        "has_photo": (t.id in with_att) or bool((t.photo_path or "").strip()),
-                    },
-                )()
-                for t in raw
-            ]
+                ):
+                    att_by_tid.setdefault(att.ticket_id, []).append(att.path)
+            tickets = []
+            for t in raw:
+                row_paths = normalize_paths_from_attachment_raw_paths(
+                    att_by_tid.get(t.id, [])
+                )
+                if not row_paths:
+                    row_paths = expand_legacy_ticket_photo_path_field(t.photo_path)
+                tickets.append(
+                    type(
+                        "T",
+                        (),
+                        {
+                            "id": t.id,
+                            "status": t.status,
+                            "title": t.title,
+                            "created_at": t.created_at,
+                            "shop_name": shop_map.get(t.shop_id, str(t.shop_id)),
+                            "photo_count": len(row_paths),
+                        },
+                    )()
+                )
             shops = db.query(Shop).order_by(Shop.id).all()
         finally:
             db.close()

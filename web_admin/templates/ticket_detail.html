@@ -15,20 +15,20 @@
     <pre class="bg-light p-2 rounded small" style="white-space:pre-wrap;">{{ ticket.description }}</pre>
     {% if photo_paths %}
     <h2 class="h6 mt-3">Фото к заявке ({{ photo_paths|length }})</h2>
-    {% for photo in photo_paths %}
-    {% set photo = (photo or '')|trim %}
+    {% for path_item in photo_paths %}
+    {% set p = (path_item or '')|trim %}
     <div class="mb-4 {% if not loop.last %}border-bottom pb-3{% endif %}">
       <p class="small text-muted mb-1">Вложение {{ loop.index }} / {{ photo_paths|length }}</p>
-      {% if photo.startswith('local:') %}
-      {% set fname = photo[6:] %}
+      {% if p.startswith('local:') %}
+      {% set fname = p[6:] %}
       <p class="mb-2"><a href="{{ url_for('ticket_photo_file', filename=fname) }}" target="_blank" rel="noopener noreferrer">Открыть в новой вкладке</a></p>
       <div class="border rounded p-2 bg-white">
         <img src="{{ url_for('ticket_photo_file', filename=fname) }}" alt="Фото {{ loop.index }}" class="img-fluid rounded" style="max-height: min(70vh, 640px); width: auto;" loading="lazy">
       </div>
-      {% elif photo.startswith('http://') or photo.startswith('https://') %}
-      <p class="mb-2"><a href="{{ photo }}" target="_blank" rel="noopener noreferrer">Открыть оригинал в новой вкладке</a></p>
+      {% elif p.startswith('http://') or p.startswith('https://') %}
+      <p class="mb-2"><a href="{{ p }}" target="_blank" rel="noopener noreferrer">Открыть оригинал в новой вкладке</a></p>
       <div class="border rounded p-2 bg-white">
-        <img src="{{ photo }}" alt="Фото {{ loop.index }}" class="img-fluid rounded" style="max-height: min(70vh, 640px); width: auto;" loading="lazy" referrerpolicy="no-referrer">
+        <img src="{{ p }}" alt="Фото {{ loop.index }}" class="img-fluid rounded" style="max-height: min(70vh, 640px); width: auto;" loading="lazy" referrerpolicy="no-referrer">
       </div>
       {% else %}
       <p class="text-muted small mb-0">Фото без ссылки (старая заявка). Пересоздайте вложение при необходимости.</p>
